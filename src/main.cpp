@@ -14,6 +14,11 @@ using nlohmann::json;
 using std::string;
 using std::vector;
 
+// declared as global variables
+int lane = 1;
+double ref_speed = 0; // mph
+
+
 int main() {
   uWS::Hub h;
 
@@ -50,6 +55,8 @@ int main() {
     map_waypoints_dx.push_back(d_x);
     map_waypoints_dy.push_back(d_y);
   }
+
+
 
   h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
                &map_waypoints_dx,&map_waypoints_dy]
@@ -99,12 +106,112 @@ int main() {
            *   sequentially every .02 seconds
            */
 
-          int lane = 1;
-          double ref_speed = 49.5; // mph
           int prev_size = previous_path_x.size();
 
+          if (prev_size > 0 ) {
+            car_s = end_path_s;
+          }
 
+          bool too_close = false;
+
+          bool left_safe = lane > 0;
+
+          bool right_safe = lane < 2;
+
+          double closest_car_dist = 31;
+          double closest_car_speed = 0.0;
+
+          for (int i = 0; i < sensor_fusion.size(); i++) {
+            float d = sensor_fusion[i][6];
+
+            // check my current lane
+            if (d < (2 + 4 * lane + 2 ) && d > (2 + 4 * lane - 2)) {
+              double vx = sensor_fusion[i][3];
+              double vy = sensor_fusion[i][4];
+
+              double check_speed = sqrt(vx*vx+vy*vy);
+              double check_car_s = sensor_fusion[i][5];
+
+              check_car_s += ((double)prev_size * .02 * check_speed);
+
+              if ((check_car_s > car_s) && ((check_car_s - car_s) < 30)) {
+
+                if ( (check_car_s - car_s) < closest_car_dist ) {
+                  closest_car_dist = check_car_s - car_s;
+                  closest_car_speed = check_speed;
+                } 
+                too_close = true;
+
+              }
+            }
+
+            // check left lane
+            if (left_safe && d <=  d > (2 + 4 * lane - 6 ) && d < (2 + 4 * lane - 2)) {
+              double vx = sensor_fusion[i][3];
+              double vy = sensor_fusion[i][4];
+
+              double check_speed = sqrt(vx*vx+vy*vy);
+              double check_car_s = sensor_fusion[i][5];
+
+              check_car_s += ((double)prev_size * .02 * check_speed);
+
+              if ( (check_car_s - car_s) < 60 && (check_car_s - car_s) > -20 ) {
+                left_safe = false;
+                // std::cout << "left is not safe"  ;
+
+              }
+            }
+
+            // check right lane
+            if (right_safe && d < (2 + 4 * lane + 6 ) && d > (2 + 4 * lane + 2)) {
+              double vx = sensor_fusion[i][3];
+              double vy = sensor_fusion[i][4];
+
+              double check_speed = sqrt(vx*vx+vy*vy);
+              double check_car_s = sensor_fusion[i][5];
+
+              check_car_s += ((double)prev_size * .02 * check_speed);
+
+              if ( (check_car_s - car_s) < 60 && (check_car_s - car_s) > -20 ) {
+                right_safe = false;
+
+                // std::cout << "right is not safe" ;
+              }
+            }
+
+
+          }
           // points to be added
+
+          if ( too_close) {
+
+            if (ref_speed > closest_car_speed) {
+              ref_speed -= .224;
+            }
+
+            // consider a lange change
+            if (lane > 0 && left_safe) {
+                lane -= 1;
+            } else if (lane <= 1 && right_safe) {
+                lane += 1;
+            }
+
+          } else if (ref_speed < 49.5) {
+            ref_speed += .224;
+            if (lane == 0 && right_safe) {
+              lane = 1;
+            }
+
+          } else {
+            if (lane == 0 && right_safe) {
+              lane = 1;
+            }
+          }
+
+          // now consider a lange change
+
+
+
 
           vector<double> ptsx;
           vector<double> ptsy;
