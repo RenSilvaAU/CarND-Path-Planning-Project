@@ -17,6 +17,7 @@ using std::vector;
 // declared as global variables
 int lane = 1;
 double ref_speed = 0; // mph
+double max_speed = 49.5;
 
 
 int main() {
@@ -106,21 +107,30 @@ int main() {
            *   sequentially every .02 seconds
            */
 
+          // DONE
+
+          // get size of unused waypoints from previous path
           int prev_size = previous_path_x.size();
 
+          // if there are endpoints, set the car's current position based on where it is right now
           if (prev_size > 0 ) {
             car_s = end_path_s;
           }
 
+          // initialise booleans
           bool too_close = false;
 
+          // initilise "safe to move left"
           bool left_safe = lane > 0;
 
+          // initialise "safe to move right"
           bool right_safe = lane < 2;
 
+          // logic to get the car to match speed of car ahead
           double closest_car_dist = 31;
           double closest_car_speed = 0.0;
 
+          // now analyse sensor fusion data
           for (int i = 0; i < sensor_fusion.size(); i++) {
             float d = sensor_fusion[i][6];
 
@@ -136,17 +146,21 @@ int main() {
 
               if ((check_car_s > car_s) && ((check_car_s - car_s) < 30)) {
 
+                // learn the speeed of the closest car ahead
                 if ( (check_car_s - car_s) < closest_car_dist ) {
                   closest_car_dist = check_car_s - car_s;
                   closest_car_speed = check_speed;
                 } 
+
+                // I am took close to car ahead.. start slowing down or match speed
                 too_close = true;
 
               }
             }
 
-            // check left lane
-            if (left_safe && d <=  d > (2 + 4 * lane - 6 ) && d < (2 + 4 * lane - 2)) {
+            // check if there are cars on the left lane
+            if (left_safe && (d <=  d > (2 + 4 * lane - 6 ) && d < (2 + 4 * lane - 2))) {
+
               double vx = sensor_fusion[i][3];
               double vy = sensor_fusion[i][4];
 
@@ -155,14 +169,13 @@ int main() {
 
               check_car_s += ((double)prev_size * .02 * check_speed);
 
-              if ( (check_car_s - car_s) < 60 && (check_car_s - car_s) > -20 ) {
+              if ( (check_car_s - car_s) < 60 && (check_car_s - car_s) > -25 ) {
+                // there is no space to move lanes.. don't do it
                 left_safe = false;
-                // std::cout << "left is not safe"  ;
-
               }
             }
 
-            // check right lane
+            // check if there are cars on the right lane
             if (right_safe && d < (2 + 4 * lane + 6 ) && d > (2 + 4 * lane + 2)) {
               double vx = sensor_fusion[i][3];
               double vy = sensor_fusion[i][4];
@@ -172,68 +185,69 @@ int main() {
 
               check_car_s += ((double)prev_size * .02 * check_speed);
 
-              if ( (check_car_s - car_s) < 60 && (check_car_s - car_s) > -20 ) {
+              if ( (check_car_s - car_s) < 60 && (check_car_s - car_s) > -25 ) {
+                // there is no space to move lanes.. don't do it
                 right_safe = false;
-
-                // std::cout << "right is not safe" ;
               }
             }
 
 
           }
-          // points to be added
 
+          // if I am too close to the car ahead
           if ( too_close) {
 
+            // if I am faster than the car ahead, slow down
             if (ref_speed > closest_car_speed) {
               ref_speed -= .224;
+            } else {
+              // otherwise, match its speed (smoother ride)
+              ref_speed = closest_car_speed;
             }
 
-            // consider a lange change
+            // now .. overtake it
             if (lane > 0 && left_safe) {
                 lane -= 1;
             } else if (lane <= 1 && right_safe) {
                 lane += 1;
             }
 
-          } else if (ref_speed < 49.5) {
+          } else if (ref_speed < max_speed) {
+
+            // accelerate
             ref_speed += .224;
             if (lane == 0 && right_safe) {
               lane = 1;
             }
 
           } else {
+
+            // don't be a lane hogger
             if (lane == 0 && right_safe) {
               lane = 1;
             }
           }
 
-          // now consider a lange change
-
-
-
-
+          // now let's build the waypoints list
           vector<double> ptsx;
           vector<double> ptsy;
 
           // reference points
           // this is where the spline is going to start from
-
           double ref_x = car_x;
           double ref_y = car_y;
           double ref_yaw = deg2rad(car_yaw);
 
-          // create two intial points for the pline
-
+          // create two intial points for a spline, based on where the car was
           if (prev_size < 2) {
 
             double prev_car_x = car_x - cos(car_yaw);
             double prev_car_y = car_y - sin(car_yaw);
 
-            // ptsx.push_back(prev_car_x);
+            // ptsx.push_back(prev_car_x); .. it seemed like a good idea, but it did not work
             ptsx.push_back(car_x);
 
-            // ptsy.push_back(prev_car_y);
+            // ptsy.push_back(prev_car_y); .. it seemed like a good idea, but it did not work
             ptsy.push_back(car_y);
 
           } else {
@@ -262,7 +276,6 @@ int main() {
           }
 
           // shift the reference back to ref_x, ref_y
-
           for (int i = 0; i < ptsx.size(); i++ )
           {
             double shift_x = ptsx[i] - ref_x;
@@ -274,27 +287,25 @@ int main() {
             
           }
 
-          // create spline for these points
+          // create spline for the sparse points
           tk::spline s;
 
           s.set_points(ptsx,ptsy);
 
-          // vector<double> next_x_vals;
-          // vector<double> next_y_vals;
 
-          // start building from the unused points from the previous path
 
+          // start building by reusing unused points from the previous path
           for (int i = 0; i < previous_path_x.size(); i++) {
             next_x_vals.push_back(previous_path_x[i]);
             next_y_vals.push_back(previous_path_y[i]);
           }
 
           // calculate how to break spline points to travel at desired speed
-
           double target_x = 30.0;
           double target_y = s(target_x);
           double target_dist = sqrt( target_x * target_x + target_y * target_y);
 
+          // finaly, build the list of points to a max of 50
           double x_add_on = 0.0;
 
           for (int i = 1; i <= 50-previous_path_x.size(); i++) {
@@ -319,22 +330,6 @@ int main() {
 
 
           }
-
-
-          vector<double> next_x_vals_2;
-          vector<double> next_y_vals_2;
-
-          double dist_inc = 0.4;
-          for (int i = 0; i < 50; ++i) {
-            double next_s = car_s+(i+1)*dist_inc;
-            double next_d = lane * 4 + 2;
-
-            vector<double> xy = getXY(next_s,next_d,map_waypoints_s,map_waypoints_x,map_waypoints_y);
-
-            next_x_vals_2.push_back(xy[0]);
-            next_y_vals_2.push_back(xy[1]);
-          }
-
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
